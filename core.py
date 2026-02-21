@@ -6,10 +6,10 @@ import json
 from datetime import datetime, timedelta
 
 import tkinter
-from tkinter import *
-from tkinter.ttk import *
+from tkinter import Misc, Event
+from ttkbootstrap import *
+from ttkbootstrap.constants import *
 from tkinter.messagebox import showinfo
-import pywinstyles
 
 from functools import partial
 from abc import ABC, abstractmethod
@@ -34,8 +34,8 @@ from typing import (
 import config
 from tool import AppGlobalLogger, input_toplevel
 
-
 _logger = AppGlobalLogger.getChild(__name__)
+
 RingTimeType = Literal["start", "end", "point"] | str
 if TYPE_CHECKING:
     T_NoteLike = TypeVar("T_NoteLike", bound=NoteLike)
@@ -52,7 +52,9 @@ class RingTime:
         ring_time = cls()
         ring_time.type = str(data[0])
         ring_time.tip = str(data[1])
-        ring_time.datetime = datetime(*map(int, data[2:]))
+        ring_time.datetime = datetime(
+            *map(int, data[2:])
+        )  # pyright: ignore[reportArgumentType]
         return ring_time
 
     def aslist(self):
@@ -143,10 +145,10 @@ class TimeInput(Frame):
                 Label(self, text=time_entry_config[i][1]).pack(side="left")
 
         # time_entry[-1].bind("<Tab>", lambda e: "break")
-        self.tip_input = Entry(self, width=12)
-        self.tip_input.pack(side="left", padx=2)
         self.edit_button = Button(self, text="E")
         self.edit_button.pack(side="right")
+        self.tip_input = Entry(self, width=16)
+        self.tip_input.pack(side="right", padx=2)
 
     def _input_length_limit(
         self, index: int, operation: str, new_content: str, this_input: str
@@ -249,11 +251,6 @@ class TimeSettingList(Frame):
 
 
 class NoteLike(Frame, ABC):
-    def add(self, item_type: type[NoteLike], /, *args, **kwarg):
-        item = item_type(master=self, *args, **kwarg)
-        self.items.append(item)
-        return item
-
     def load(self, name: str):
         return self._build(*self._load_data(self.save_file_name_(name)))
 
@@ -264,12 +261,6 @@ class NoteLike(Frame, ABC):
             self.data = data
         elif type(data) is dict:
             self.data = NoteData(**data)
-
-        if child is not None:
-            for i in child:
-                widget = NoteLikeStrMapping[i["type"]]
-                item = self.add(widget)
-                item._build(*self._normal_data(i))
         return self
 
     def _load_data(
@@ -295,10 +286,6 @@ class NoteLike(Frame, ABC):
 
     def dump(self):
         data = self.data.dump()
-        if self.items:
-            data["_items"] = []
-            for item in self.items:
-                data["_items"].append(item.dump())
         return data
 
     def save(self):
@@ -332,6 +319,43 @@ class NoteLike(Frame, ABC):
     @abstractmethod
     def data(self, value: NoteData): ...
 
+
+class NoteHolder(NoteLike, ABC):
+    def add(self, item_type: type[NoteLike], /, *args, **kwarg):
+        item = item_type(master=self, *args, **kwarg)
+        # item.bg_color(len(self.items))
+        self.items.append(item)
+        return item
+
+        # def bg_color(self, index:int):
+        #     if index % 2 == 1:
+        #         self.frame_color_tree_set(self)
+
+        # def frame_color_tree_set(self, widget):
+        #     widget.config(bootstyle=INFO)
+        #     for i in widget.children.values():
+        #         if type(i) is Frame or type(i) is Label:
+        #             self.frame_color_tree_set(i)
+
+    @override
+    def _build(self, data: NoteData | dict[str, Any], child: list[dict[str, Any]] | None):
+        super()._build(data, child)
+        if child is not None:
+            for i in child:
+                widget = NoteLikeStrMapping[i["type"]]
+                item = self.add(widget)
+                item._build(*self._normal_data(i))
+        return self
+    
+    @override
+    def dump(self):
+        data = super().dump()
+        if self.items:
+            data["_items"] = []
+            for item in self.items:
+                data["_items"].append(item.dump())
+        return data
+
     @property
     @abstractmethod
     def items(self) -> list[NoteLike]: ...
@@ -342,9 +366,16 @@ class NoteLike(Frame, ABC):
 
 
 class Note(NoteLike):
-    def __init__(self, master: Misc, *args, **kwargs) -> None:
+    def __init__(
+        self, master: Misc, holder: Workspace | None = None, *args, **kwargs
+    ) -> None:  # holder:Workspace|NoteGroup|None NoteGroup实现后应该添加上
         super().__init__(master, *args, **kwargs)
         self.pack(side="top", fill="x", expand=True, padx=6, pady=6)
+
+        if holder is None:
+            self.holder = holder
+        else:
+            self.holder = holder
 
         self._data: NoteData = NoteData(Note)
         self._items: list[NoteLike] = []
@@ -355,7 +386,11 @@ class Note(NoteLike):
         self.title_input = Entry(
             fm,
         )
-        self.title_input.pack(fill="x", expand=True)
+        self.title_input.pack(side="left", fill="x", expand=True)
+        
+        self.edit_commands: dict[str, Callable[[], Any]] = {}
+        self.edit_buttom = FloatMenuButton(fm, text="edit")
+        self.edit_buttom.pack(side="right", padx=2)
 
         fm = Frame(self)
         fm.pack(fill="x", expand=True)
@@ -370,6 +405,10 @@ class Note(NoteLike):
 
         self.note_text = Text(self, height=10)
         self.note_text.pack()
+
+    def bind_edit_button(self, commands:dict[str, Callable[[], Any]]):
+        self.edit_commands = commands
+        self.edit_buttom.add_commands([("delete", self.edit_commands['delete'])])
 
     @property
     @override
@@ -395,18 +434,8 @@ class Note(NoteLike):
 
         self.ring_switch_var.set(self._data.ringable)
 
-    @property
-    @override
-    def items(self) -> list[NoteLike]:
-        return self._items
 
-    @items.setter
-    @override
-    def items(self, value: list[NoteLike]):
-        self._items = value
-
-
-class NoteGroup(NoteLike):
+class NoteGroup(NoteHolder):
     def __init__(self, master: Misc, *args, **kwargs):
         super().__init__(master, *args, **kwargs)
         self.pack(fill="x", expand=True)
@@ -435,11 +464,11 @@ class NoteGroup(NoteLike):
         self._items = value
 
 
-class Workspace(NoteLike):
+class Workspace(NoteHolder):
     def __init__(self, master: Misc, app: App, title: str = "", *args, **kwargs):
         super().__init__(master, *args, **kwargs)
         self.pack(side="top", fill="x", expand=True)
-        
+
         self._app = app
 
         self._data: NoteData = NoteData(Workspace, title=title)
@@ -449,16 +478,31 @@ class Workspace(NoteLike):
         fm.pack(side="top", fill="x", expand=True)
         self.title_label = Label(fm)
         self.title_label.pack(side="left", fill="x", expand=True)
-        MenuButton(
+        FloatMenuButton(
             fm,
             text="Edit",
             command=self.rename,
-        ).add_menus(
+        ).add_commands(
             [
                 ("rename", self.rename),
                 ("delete", self.delete),
             ]
         ).pack(side="right")
+    
+    @override
+    def add(self, item_type: type[NoteLike], /, *args, **kwarg):
+        item = super().add(item_type, *args, **kwarg)
+        if isinstance(item, Note):
+            item.bind_edit_button({
+                "delete": self.build_remove_func(item)
+            })
+        return item
+    
+    def build_remove_func(self, widget: NoteLike):
+        def remove():
+            self.items.remove(widget)
+            widget.destroy()
+        return remove
 
     def save_to_file(self):
         while self.data.title == "":
@@ -507,35 +551,44 @@ class ScrollFrame(Frame):
         super().__init__(master, *args, **kwargs)
         self.pack(fill="both", expand=True)
         # Canvas 提供滚动功能
-        canvas = Canvas(self, bg="#000000")  # todo:change color
-        scrollbar = Scrollbar(self, orient="vertical", command=canvas.yview)
+        self.canvas = Canvas(self)
+        self.scrollbar = Scrollbar(self, orient="vertical", command=self.canvas.yview)
 
         # Frame 作为内容容器放在 Canvas 中
-        content_frame: Frame = tkinter.Frame(canvas, bg="#00bbbb")  # todo:Use ttk.Style
+        content_frame: Frame = Frame(self.canvas)
         content_frame.pack(fill="both", expand=True)
 
         # 将 Frame 放入 Canvas，并设置填充和扩展
-        window_id = canvas.create_window(
-            (0, 0), window=content_frame, anchor="nw", width=canvas.winfo_reqwidth()
+        window_id = self.canvas.create_window(
+            (0, 0),
+            window=content_frame,
+            anchor="nw",
+            width=self.canvas.winfo_reqwidth(),
         )
 
         # 配置 Canvas 滚动
-        canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
         content_frame.bind(
-            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        canvas.bind(
             "<Configure>",
-            lambda event: canvas.itemconfig(window_id, width=canvas.winfo_width()),
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        )
+        self.canvas.bind(
+            "<Configure>",
+            lambda event: self.canvas.itemconfig(
+                window_id, width=self.canvas.winfo_width()
+            ),
         )
 
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
+        master.bind("<MouseWheel>", self.on_mousewheel)
+
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
 
         self.content_frame: Frame = content_frame
         self.items: list[NoteLike] = []
 
-        # self.content_frame.split_widget = self.split_widget
+    def on_mousewheel(self, event: Event):
+        self.canvas.yview_scroll(-event.delta // 120, "units")
 
     def add(self, widget: type[T_NoteLike], *args, **kwargs) -> T_NoteLike:
         # if len(self.items) > 0:
@@ -544,15 +597,8 @@ class ScrollFrame(Frame):
         self.items.append(widget_obj)
         return widget_obj
 
-    # def split_widget(self): # todo:应该在Workspace中
-    #     sep_frame = tkinter.Frame(
-    #         self.content_frame, relief="flat", bg="black", height=2
-    #     )
-    #     sep_frame.pack(fill="x", padx=60)
-    #     return sep_frame
 
-
-class MenuButton(Button):
+class FloatMenuButton(Button):
     def __init__(self, master: Misc, *args, **kwargs):
         super().__init__(master, *args, **kwargs)
         self.menu = Menu(self, tearoff=False)
@@ -560,17 +606,17 @@ class MenuButton(Button):
             "<Button-3>", lambda event: self.menu.post(event.x_root, event.y_root)
         )
 
-    def add_menu(self, label: str, func: Callable[..., Any], accelerator: str = ""):
+    def add_command(self, label: str, func: Callable[..., Any], accelerator: str = ""):
         self.menu.add_command(label=label, command=func, accelerator=accelerator)
 
-    def add_menus(
+    def add_commands(
         self,
         commands: list[
             tuple[str, Callable[..., Any]] | tuple[str, Callable[..., Any], str]
         ],
     ):
         for i in commands:
-            self.add_menu(*i)  # pyright: ignore[reportArgumentType]
+            self.add_command(*i)  # pyright: ignore[reportArgumentType]
         return self
 
 
@@ -589,15 +635,20 @@ class AppMenu(Frame):
             side="left", fill="both", expand=True
         )
 
-        MenuButton(self, text="edit", command=lambda: print("Button 3")).add_menus(
+        FloatMenuButton(
+            self, text="edit", command=lambda: print("Button 3")
+        ).add_commands(
             [
                 ("save", self._app.save, "Ctrl+S"),
+                # ("open", self._app)
             ]
-        ).pack(side="left", fill="both", expand=True)
+        ).pack(
+            side="left", fill="both", expand=True
+        )
 
-        MenuButton(
+        FloatMenuButton(
             self, text="new", command=lambda: self._app.active_workspace.add(Note)
-        ).add_menus(
+        ).add_commands(
             [
                 ("note", lambda: self._app.active_workspace.add(Note)),
                 ("group", lambda: self._app.active_workspace.add(NoteGroup)),
@@ -613,10 +664,10 @@ class AppMenu(Frame):
         tkinter.Label(self, height=2).pack(side="left", padx=0, pady=0)
 
 
-class App(Tk):
+class App(Window):
     def __init__(self):
         super().__init__("NekoNoteBook")
-        self.geometry("400x800")
+        self.geometry("460x800")
         self.resizable(width=False, height=True)
         # pywinstyles.apply_style(self, "aero")
         self.note_frame = ScrollFrame(self)
@@ -628,6 +679,9 @@ class App(Tk):
         self.bind("<Control-s>", self.save)
 
     def _post_init(self):
+        style = Style()
+        style.register_theme(config.APP_THEME)
+        style.theme_use("sakura_dusk")
         AppMenu(self, self)
 
     def save(self, event: Event | None = None):
