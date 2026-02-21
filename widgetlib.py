@@ -1,9 +1,9 @@
 from tkinter import *
 from tkinter.ttk import *
 
-class InputDialog:
+class AskToplevel:
     def __init__(self, master, title="title", prompt="prompt", default=""):
-        self.result:str = ""  # 保存用户输入的结果
+        self.result:str|None = ""  # 保存用户输入的结果
         
         # 创建顶级窗口
         self.dialog = Toplevel(master)
@@ -65,13 +65,13 @@ class InputDialog:
     
     def on_cancel(self):
         """取消按钮的处理函数"""
-        self.result = ""
+        self.result = None
         self.dialog.destroy()
 
 
 def main():
     root = Tk()
-    inp = InputDialog(root, default="123123")
+    inp = AskToplevel(root, default="123123")
     root.mainloop()
     print(inp.result)
 
