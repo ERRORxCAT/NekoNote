@@ -9,9 +9,9 @@ import tkinter
 from tkinter import Misc, Event
 from ttkbootstrap import *
 from ttkbootstrap.constants import *
-from tkinter.messagebox import showinfo
+from tkinter.messagebox import showinfo, showerror
 
-from functools import partial
+from functools import partial, singledispatchmethod
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict, InitVar, replace
 from collections.abc import Sequence
@@ -32,7 +32,7 @@ from typing import (
 
 # from widgetlib import InputDialog
 import config
-from tool import AppGlobalLogger, input_toplevel
+from tool import AppGlobalLogger, ask_toplevel
 
 _logger = AppGlobalLogger.getChild(__name__)
 
@@ -97,7 +97,7 @@ class NoteData:
 class TimeInput(Frame):
     def __init__(self, master: Misc, *args, **kwargs):
         super().__init__(master, *args, **kwargs)
-        self.pack(fill="x", expand=True)
+        self.pack(fill="x", expand=True, pady=2)
 
         self._data = RingTime()
 
@@ -132,7 +132,7 @@ class TimeInput(Frame):
             self.time_entry[-1].config(
                 validate="key",
                 validatecommand=(
-                    self.register(partial(self._input_length_limit, i)),
+                    self.register(partial(self._input_validate, i)),
                     "%d",
                     "%P",
                     "%S",
@@ -145,12 +145,12 @@ class TimeInput(Frame):
                 Label(self, text=time_entry_config[i][1]).pack(side="left")
 
         # time_entry[-1].bind("<Tab>", lambda e: "break")
-        self.edit_button = Button(self, text="E")
-        self.edit_button.pack(side="right")
+        self.edit_button = Button(self, text="X", bootstyle=(DANGER, OUTLINE))
+        self.edit_button.pack(side="right", padx=2)
         self.tip_input = Entry(self, width=16)
         self.tip_input.pack(side="right", padx=2)
 
-    def _input_length_limit(
+    def _input_validate(
         self, index: int, operation: str, new_content: str, this_input: str
     ) -> bool:
         if not this_input.isdigit():
@@ -218,8 +218,8 @@ class TimeSettingList(Frame):
         self.menu = Frame(self)
         self.menu.pack(fill="x", expand=True)
 
-        Button(self.menu, text="ADD", command=self.add_time_input).pack(
-            side="left", fill="x", expand=True
+        Button(self.menu, text="ADD", command=self.add_time_input, bootstyle = (OUTLINE, INFO)).pack(
+            side="left", fill="x", expand=True, pady=2
         )
 
     def add_time_input(self, value=None):
@@ -338,7 +338,9 @@ class NoteHolder(NoteLike, ABC):
         #             self.frame_color_tree_set(i)
 
     @override
-    def _build(self, data: NoteData | dict[str, Any], child: list[dict[str, Any]] | None):
+    def _build(
+        self, data: NoteData | dict[str, Any], child: list[dict[str, Any]] | None
+    ):
         super()._build(data, child)
         if child is not None:
             for i in child:
@@ -346,7 +348,7 @@ class NoteHolder(NoteLike, ABC):
                 item = self.add(widget)
                 item._build(*self._normal_data(i))
         return self
-    
+
     @override
     def dump(self):
         data = super().dump()
@@ -387,10 +389,10 @@ class Note(NoteLike):
             fm,
         )
         self.title_input.pack(side="left", fill="x", expand=True)
-        
+
         self.edit_commands: dict[str, Callable[[], Any]] = {}
-        self.edit_buttom = FloatMenuButton(fm, text="edit")
-        self.edit_buttom.pack(side="right", padx=2)
+        self.edit_buttom = FloatMenuButton(fm, text="edit", bootstyle = (OUTLINE, WARNING))
+        self.edit_buttom.pack(side="right", padx=2, pady=2)
 
         fm = Frame(self)
         fm.pack(fill="x", expand=True)
@@ -403,12 +405,25 @@ class Note(NoteLike):
 
         self.time_setting_list = TimeSettingList(self)
 
-        self.note_text = Text(self, height=10)
+        self.note_text = Text(self, height=3)
         self.note_text.pack()
+        
+        self.note_text.bind("<Return>", self.text_check)
+        self.note_text.bind("<KeyRelease-BackSpace>", self.text_check)
+        
+    
+    def text_check(self, event:Event|None = None):
+        text = self.note_text.get("1.0", END)
+        line = text.count("\n")
+        if line <= 2:
+            self.note_text.config(height=3)
+        else:
+            self.note_text.config(height=line+1)
 
-    def bind_edit_button(self, commands:dict[str, Callable[[], Any]]):
+
+    def bind_edit_button(self, commands: dict[str, Callable[[], Any]]):
         self.edit_commands = commands
-        self.edit_buttom.add_commands([("delete", self.edit_commands['delete'])])
+        self.edit_buttom.add_commands([("delete", self.edit_commands["delete"])])
 
     @property
     @override
@@ -431,6 +446,7 @@ class Note(NoteLike):
 
         self.note_text.delete("1.0", END)
         self.note_text.insert("1.0", self._data.note)
+        self.text_check()
 
         self.ring_switch_var.set(self._data.ringable)
 
@@ -475,33 +491,33 @@ class Workspace(NoteHolder):
         self._items: list[NoteLike] = []
 
         fm = Frame(self)
-        fm.pack(side="top", fill="x", expand=True)
+        fm.pack(side="top", fill="x", expand=True, padx=4, pady=4)
         self.title_label = Label(fm)
         self.title_label.pack(side="left", fill="x", expand=True)
         FloatMenuButton(
             fm,
             text="Edit",
             command=self.rename,
+            bootstyle = (OUTLINE, WARNING)
         ).add_commands(
             [
                 ("rename", self.rename),
-                ("delete", self.delete),
+                ("delete", self.close),
             ]
         ).pack(side="right")
-    
+
     @override
     def add(self, item_type: type[NoteLike], /, *args, **kwarg):
         item = super().add(item_type, *args, **kwarg)
         if isinstance(item, Note):
-            item.bind_edit_button({
-                "delete": self.build_remove_func(item)
-            })
+            item.bind_edit_button({"delete": self.build_remove_func(item)})
         return item
-    
+
     def build_remove_func(self, widget: NoteLike):
         def remove():
             self.items.remove(widget)
             widget.destroy()
+
         return remove
 
     def save_to_file(self):
@@ -509,12 +525,16 @@ class Workspace(NoteHolder):
             self.rename(prompt="title can not be empty")
         self.save()
 
-    def delete(self):
+    def close(self):
         self.destroy()
+
+    def safe_close(self):
+        self.save_to_file()
+        self.close()
 
     def rename(self, title: str | None = None, prompt: str = "import new title"):
         if title is None:
-            new_title = input_toplevel(
+            new_title = ask_toplevel(
                 self._app,
                 title="Rename workspace",
                 prompt=prompt,
@@ -522,7 +542,9 @@ class Workspace(NoteHolder):
             )
         else:
             new_title = title
-        self.config_data(title=new_title)
+
+        if new_title is not None:
+            self.config_data(title=new_title)
 
     @property
     @override
@@ -586,6 +608,9 @@ class ScrollFrame(Frame):
 
         self.content_frame: Frame = content_frame
         self.items: list[NoteLike] = []
+        
+        # 占位使得笔记可以额外向上滚动一段空间
+        Label(self.content_frame, text="\n"*5+r"ヾ(≧▽≦*)o").pack(side="bottom")
 
     def on_mousewheel(self, event: Event):
         self.canvas.yview_scroll(-event.delta // 120, "units")
@@ -599,12 +624,56 @@ class ScrollFrame(Frame):
 
 
 class FloatMenuButton(Button):
-    def __init__(self, master: Misc, *args, **kwargs):
+    def __init__(
+        self,
+        master: Misc,
+        menu_anchor: Literal[
+            "nw", "n", "ne", "w", "center", "e", "sw", "s", "se"
+        ] = "nw",
+        menu_reverse: bool = False,
+        mouse_buttom: Literal["1", "2", "3", "4", "5"] | int = "3",
+        # press: bool = False,
+        *args,
+        **kwargs,
+    ):
         super().__init__(master, *args, **kwargs)
+        self.menu_reverse = menu_reverse
+        self.menu_post_anchor = menu_anchor
+        # self.press = press
+
         self.menu = Menu(self, tearoff=False)
+
+        def menu_post(event: Event):
+            x_post, y_post = event.x_root, event.y_root
+            menu_width, menu_height = (
+                self.menu.winfo_reqwidth(),
+                self.menu.winfo_reqheight(),
+            )
+            if self.menu_post_anchor == "center":
+                x_post -= menu_width // 2
+                y_post -= menu_height // 2
+            else:
+                if "e" in self.menu_post_anchor:
+                    x_post -= menu_width
+                if "s" in self.menu_post_anchor:
+                    y_post -= menu_height
+
+            self.menu.post(x_post, y_post)
+
+        # def menu_unpost(event: Event|None = None):
+        #     self.menu.unpost()
+        #     _logger.debug("unpost")
+
         self.bind(
-            "<Button-3>", lambda event: self.menu.post(event.x_root, event.y_root)
+            f"<Button-{mouse_buttom}>",
+            menu_post,
         )
+        # if self.press:
+        #     self.bind(
+        #         f"<ButtonRelease-{mouse_buttom}>",
+        #         menu_unpost,
+        #     )
+        # 松开鼠标时菜单不会消失
 
     def add_command(self, label: str, func: Callable[..., Any], accelerator: str = ""):
         self.menu.add_command(label=label, command=func, accelerator=accelerator)
@@ -615,6 +684,8 @@ class FloatMenuButton(Button):
             tuple[str, Callable[..., Any]] | tuple[str, Callable[..., Any], str]
         ],
     ):
+        if self.menu_reverse:
+            commands.reverse()
         for i in commands:
             self.add_command(*i)  # pyright: ignore[reportArgumentType]
         return self
@@ -636,18 +707,15 @@ class AppMenu(Frame):
         )
 
         FloatMenuButton(
-            self, text="edit", command=lambda: print("Button 3")
+            self, text="edit", mouse_buttom=1, menu_anchor="sw", menu_reverse=True
         ).add_commands(
-            [
-                ("save", self._app.save, "Ctrl+S"),
-                # ("open", self._app)
-            ]
+            [("save", self._app.save, "Ctrl+S"), ("open", self._app.open)]
         ).pack(
             side="left", fill="both", expand=True
         )
 
         FloatMenuButton(
-            self, text="new", command=lambda: self._app.active_workspace.add(Note)
+            self, text="new", mouse_buttom=1, menu_anchor="sw", menu_reverse=True
         ).add_commands(
             [
                 ("note", lambda: self._app.active_workspace.add(Note)),
@@ -661,8 +729,6 @@ class AppMenu(Frame):
             side="left", fill="both", expand=True
         )
 
-        tkinter.Label(self, height=2).pack(side="left", padx=0, pady=0)
-
 
 class App(Window):
     def __init__(self):
@@ -670,6 +736,7 @@ class App(Window):
         self.geometry("460x800")
         self.resizable(width=False, height=True)
         # pywinstyles.apply_style(self, "aero")
+        AppMenu(self, self)
         self.note_frame = ScrollFrame(self)
 
         self._active_workspace: Workspace | None = None
@@ -678,11 +745,8 @@ class App(Window):
 
         self.bind("<Control-s>", self.save)
 
-    def _post_init(self):
-        style = Style()
-        style.register_theme(config.APP_THEME)
-        style.theme_use("sakura_dusk")
-        AppMenu(self, self)
+        self.style.register_theme(config.APP_THEME)
+        self.style.theme_use("sakura_dusk")
 
     def save(self, event: Event | None = None):
         self.active_workspace.save_to_file()
@@ -691,6 +755,14 @@ class App(Window):
             message=f"save '{self.active_workspace.save_file_name()}' successfully",
         )
         _logger.info(f"save '{self.active_workspace.save_file_name()}' successfully")
+
+    def open(self):
+        title = ask_toplevel(self, title="open", prompt="Workspace file title")
+        if title is None:
+            return
+        else:
+            if not self.load_workspace(title):
+                showerror(title="error", message="Failed to open")
 
     @property
     def active_workspace(self) -> Workspace:
@@ -702,22 +774,34 @@ class App(Window):
     @active_workspace.setter
     def active_workspace(self, value: Workspace):
         if self._active_workspace:
-            self._active_workspace.delete()
+            self._active_workspace.close()
             _logger.debug("_active_workspace will be replace")
         self._active_workspace = value
 
-    def new_workspace(self, title: str | None = None):
+    @overload
+    def new_workspace(self, title: None = None) -> Workspace | None: ...
+
+    @overload
+    def new_workspace(self, title: str) -> Workspace: ...
+
+    def new_workspace(self, title: str | None = None) -> Workspace | None:
         """
         `name=None`用于需要用户立即指定title的情况, 比如主动创建新的Workspace,
         其他情况应该使用`name=""`保持静默
         """
         if title is None:
-            title = input_toplevel(self, title="New workspace", prompt="title")
+            title = ask_toplevel(self, title="New workspace", prompt="title")
+        if title is None:
+            return None
+
+        if self._active_workspace and self._active_workspace.winfo_exists():
+            self._active_workspace.safe_close()
+
         self._active_workspace = self.note_frame.add(Workspace, app=self)
         self._active_workspace.rename(title)
         return self._active_workspace
 
-    def load_workspace(self, name: str):
+    def load_workspace(self, name: str) -> bool:
         path = Workspace.save_file_name_(name)
         _logger.info(f"load Workspace '{path}'")
 
@@ -742,7 +826,6 @@ NoteLikeStrMapping: dict[str, type] = {
 
 def main():
     app = App()
-    app._post_init()
     app.mainloop()
 
 
